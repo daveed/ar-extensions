@@ -231,10 +231,30 @@ class ActiveRecord::Base
       # create instances for each of our column/value sets
       arr = validations_array_for_column_names_and_attributes( column_names, array_of_attributes )    
 
+      # protected attributes that can not be mass-assigned
+      attributes_protected_by_default = [primary_key, inheritance_column]
+      attributes_protected_by_default << 'id' unless primary_key.eql? 'id'
+      
       # keep track of the instance and the position it is currently at. if this fails
       # validation we'll use the index to remove it from the array_of_attributes
       arr.each_with_index do |hsh,i|
-        instance = new( hsh )
+        if options[:write_protected_attrs]
+          safe_hsh = 
+            if accessible_attributes.nil? && protected_attributes.nil?
+              hsh.reject {  |key, value| attributes_protected_by_default.include?(key) }
+            elsif protected_attributes.nil?
+              hsh.reject { |key, value| !accessible_attributes.include?(key) || attributes_protected_by_default.include?(key) }
+            elsif accessible_attributes.nil?
+              hsh.reject { |key, value| protected_attributes.include?(key) || attributes_protected_by_default.include?(key) }
+            else
+              raise "Declare either attr_protected or attr_accessible for #{self.class}, but not both."
+            end
+          removed_attributes = hsh.keys - safe_hsh.keys
+          instance = new( safe_hsh )
+          removed_attributes.each { |attr| instance[attr] = hsh[attr] }
+        else
+          instance = new( hsh )
+        end
         if not instance.valid?
           array_of_attributes[ i ] = nil
           failed_instances << instance
@@ -245,7 +265,7 @@ class ActiveRecord::Base
       num_inserts = array_of_attributes.empty? ? 0 : import_without_validations_or_callbacks( column_names, array_of_attributes, options )
       OpenStruct.new :failed_instances=>failed_instances, :num_inserts => num_inserts
     end
-    
+
     # Imports the passed in +column_names+ and +array_of_attributes+
     # given the passed in +options+ Hash. This will return the number
     # of insert operations it took to create these records without
